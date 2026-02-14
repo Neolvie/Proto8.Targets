@@ -11,6 +11,7 @@ const state = {
   chatMessages: [],
   jsonFile: null,
   docxFile: null,
+  caseAbortController: null,
 };
 
 // Инициализация сессии
@@ -192,6 +193,14 @@ async function runCase(caseId) {
   }
 
   hideGlobalAlert();
+
+  // Отменяем предыдущий запрос если он ещё идёт
+  if (state.caseAbortController) {
+    state.caseAbortController.abort();
+  }
+  state.caseAbortController = new AbortController();
+  const signal = state.caseAbortController.signal;
+
   state.currentCaseId = caseId;
   const caseNames = {
     1: 'Кейс 1: Формулировка описания цели',
@@ -216,6 +225,7 @@ async function runCase(caseId) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal,
     });
 
     if (!resp.ok) {
@@ -223,9 +233,10 @@ async function runCase(caseId) {
       throw new Error(err.detail || 'Ошибка запроса');
     }
 
-    await readSSEStream(resp, 'result-content');
-    showFeedbackBar();
+    await readSSEStream(resp, 'result-content', signal);
+    if (!signal.aborted) showFeedbackBar();
   } catch (e) {
+    if (e.name === 'AbortError') return; // Запрос отменён — тихо игнорируем
     document.getElementById('result-content').textContent = 'Ошибка: ' + e.message;
     hideLoading();
   }
@@ -449,13 +460,14 @@ function renderMarkdown(text) {
 
 // ===== SSE УТИЛИТЫ =====
 
-async function readSSEStream(resp, targetElementId) {
+async function readSSEStream(resp, targetElementId, signal) {
   const element = document.getElementById(targetElementId);
   const loading = document.getElementById('result-loading');
   let started = false;
   let fullText = '';
 
   await readSSEStreamToElement(resp, (chunk) => {
+    if (signal && signal.aborted) return;
     if (!started) {
       if (loading) loading.classList.add('hidden');
       started = true;
@@ -466,17 +478,22 @@ async function readSSEStream(resp, targetElementId) {
       fullText += chunk;
     }
     element.innerHTML = renderMarkdown(fullText);
-  });
+  }, signal);
 }
 
-async function readSSEStreamToElement(resp, onChunk) {
+async function readSSEStreamToElement(resp, onChunk, signal) {
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
 
+  // Отменяем чтение потока при abort
+  if (signal) {
+    signal.addEventListener('abort', () => reader.cancel(), { once: true });
+  }
+
   while (true) {
     const { done, value } = await reader.read();
-    if (done) break;
+    if (done || (signal && signal.aborted)) break;
 
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');

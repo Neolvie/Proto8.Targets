@@ -1,0 +1,18 @@
+version: "3.9"
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    # env_file передаёт переменные окружения из .env файла
+    # Раскомментировать когда .env существует:
+    # env_file:
+    #   - .env
+    environment:
+      # - OPENAI_API_KEY=your_token_here
+      # - OPENAI_MODEL=gpt-4o
+      # - OPENAI_SERVER=https://api.openai.com/v1
+    restart: unless-stopped

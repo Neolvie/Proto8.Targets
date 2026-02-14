@@ -10,7 +10,8 @@
       "Bash(python3:*)",
       "Bash(docker-compose down:*)",
       "Bash(docker-compose ps:*)",
-      "Bash(Start-Sleep -Seconds 3)"
+      "Bash(Start-Sleep -Seconds 3)",
+      "Bash(del \"C:\\\\Projects\\\\Claude\\\\Proto8.Targets\\\\src\\\\static\\\\marked.min.js\")"
     ]
   }
 }

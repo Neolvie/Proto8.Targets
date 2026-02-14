@@ -244,9 +244,7 @@ async def run_case(case_id: int, request: Request, body: CaseRequest):
         """Генератор SSE-событий для потоковой передачи ответа."""
         try:
             async for chunk in generator:
-                # Экранируем newlines в SSE формате
-                for line in chunk.split("\n"):
-                    yield f"data: {json.dumps(line)}\n\n"
+                yield f"data: {json.dumps(chunk)}\n\n"
         except ValueError as e:
             yield f"data: {json.dumps('[ERROR] ' + str(e))}\n\n"
         except RuntimeError as e:
@@ -291,8 +289,7 @@ async def chat(request: Request, body: ChatRequest):
         """Генератор SSE-событий для потоковой передачи ответа чата."""
         try:
             async for chunk in generator:
-                for line in chunk.split("\n"):
-                    yield f"data: {json.dumps(line)}\n\n"
+                yield f"data: {json.dumps(chunk)}\n\n"
         except ValueError as e:
             yield f"data: {json.dumps('[ERROR] ' + str(e))}\n\n"
         except RuntimeError as e:

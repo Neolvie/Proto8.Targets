@@ -283,13 +283,12 @@ async function sendChatMessage() {
       throw new Error(err.detail || 'Ошибка запроса');
     }
 
+    let fullText = '';
     assistantDiv.innerHTML = '';
     assistantDiv.classList.remove('loading-msg');
-
-    let fullText = '';
     await readSSEStreamToElement(resp, (chunk) => {
       fullText += chunk;
-      assistantDiv.textContent = fullText;
+      assistantDiv.innerHTML = renderMarkdown(fullText);
       scrollChatToBottom();
     });
 
@@ -369,23 +368,104 @@ async function sendFeedback(vote) {
   }
 }
 
+// ===== MARKDOWN РЕНДЕРЕР =====
+
+function renderMarkdown(text) {
+  const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const lines = text.split('\n');
+  let html = '';
+  let inList = false;
+  let inOrderedList = false;
+
+  const closeList = () => {
+    if (inList)        { html += '</ul>'; inList = false; }
+    if (inOrderedList) { html += '</ol>'; inOrderedList = false; }
+  };
+
+  const inlineFormat = (s) => {
+    // Экранируем HTML
+    s = esc(s);
+    // Жирный + курсив: ***text***
+    s = s.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+    // Жирный: **text**
+    s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    // Курсив: *text*
+    s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    // Инлайн-код: `code`
+    s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+    return s;
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Заголовки
+    if (/^### /.test(line)) { closeList(); html += `<h3>${inlineFormat(line.slice(4))}</h3>`; continue; }
+    if (/^## /.test(line))  { closeList(); html += `<h2>${inlineFormat(line.slice(3))}</h2>`; continue; }
+    if (/^# /.test(line))   { closeList(); html += `<h1>${inlineFormat(line.slice(2))}</h1>`; continue; }
+
+    // Горизонтальная линия
+    if (/^---+$/.test(line.trim())) { closeList(); html += '<hr>'; continue; }
+
+    // Маркированный список
+    if (/^[-*] /.test(line)) {
+      if (inOrderedList) { html += '</ol>'; inOrderedList = false; }
+      if (!inList) { html += '<ul>'; inList = true; }
+      html += `<li>${inlineFormat(line.slice(2))}</li>`;
+      continue;
+    }
+
+    // Нумерованный список
+    if (/^\d+\. /.test(line)) {
+      if (inList) { html += '</ul>'; inList = false; }
+      if (!inOrderedList) { html += '<ol>'; inOrderedList = true; }
+      html += `<li>${inlineFormat(line.replace(/^\d+\. /, ''))}</li>`;
+      continue;
+    }
+
+    // Blockquote
+    if (/^> /.test(line)) {
+      closeList();
+      html += `<blockquote>${inlineFormat(line.slice(2))}</blockquote>`;
+      continue;
+    }
+
+    // Пустая строка
+    if (line.trim() === '') {
+      closeList();
+      html += '<br>';
+      continue;
+    }
+
+    // Обычный абзац
+    closeList();
+    html += `<p>${inlineFormat(line)}</p>`;
+  }
+
+  closeList();
+  return html;
+}
+
 // ===== SSE УТИЛИТЫ =====
 
 async function readSSEStream(resp, targetElementId) {
   const element = document.getElementById(targetElementId);
   const loading = document.getElementById('result-loading');
   let started = false;
+  let fullText = '';
 
-  return readSSEStreamToElement(resp, (chunk) => {
+  await readSSEStreamToElement(resp, (chunk) => {
     if (!started) {
       if (loading) loading.classList.add('hidden');
       started = true;
     }
     if (chunk.startsWith('[ERROR]')) {
-      element.textContent = chunk.replace('[ERROR] ', 'Ошибка: ');
+      fullText = chunk.replace('[ERROR] ', 'Ошибка: ');
     } else {
-      element.textContent += chunk + '\n';
+      fullText += chunk;
     }
+    element.innerHTML = renderMarkdown(fullText);
   });
 }
 

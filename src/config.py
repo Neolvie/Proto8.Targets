@@ -43,3 +43,10 @@ def get_targets_token() -> str | None:
     """Возвращает Bearer-токен для Directum Targets API."""
     token = os.getenv("TARGETS_TOKEN", "").strip()
     return token if token else None
+
+
+def get_backoffice_credentials() -> tuple[str, str]:
+    """Возвращает (логин, пароль) для Basic Auth бэкофиса."""
+    user = os.getenv("BACKOFFICE_USER", "admin").strip()
+    password = os.getenv("BACKOFFICE_PASSWORD", "admin").strip()
+    return user, password

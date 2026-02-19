@@ -16,13 +16,12 @@ const state = {
 };
 
 const CASE_NAMES = {
-  1: 'Формулировка описания цели',
-  2: 'Формулировка ключевых результатов',
-  3: 'Декомпозиция на квартальные цели',
-  4: 'Верификация по ожиданиям руководства',
-  5: 'Конфликты и слепые зоны стратегии',
-  6: 'Риски достижения цели',
-  7: 'Экспресс-отчёт по целям',
+  1: 'Переформулировать цель',
+  2: 'Сгенерировать KR',
+  3: 'Декомпозировать',
+  5: 'Подсветить конфликты',
+  6: 'Выявить риски',
+  7: 'Подготовить отчёт',
 };
 
 // ===== SESSION =====
@@ -315,6 +314,38 @@ function appendFeedbackBar(afterElement, caseId) {
   scrollChatToBottom();
 }
 
+function appendChatFeedbackBar(afterElement, userMessage) {
+  const bar = document.createElement('div');
+  bar.className = 'feedback-bar';
+
+  const label = document.createElement('span');
+  label.className = 'feedback-label';
+  label.textContent = 'Оцените ответ:';
+
+  const btnUp = document.createElement('button');
+  btnUp.className = 'feedback-btn';
+  btnUp.textContent = '👍';
+
+  const btnDown = document.createElement('button');
+  btnDown.className = 'feedback-btn';
+  btnDown.textContent = '👎';
+
+  const sent = document.createElement('span');
+  sent.className = 'feedback-sent hidden';
+  sent.textContent = 'Оценка сохранена';
+
+  btnUp.addEventListener('click', () => sendChatFeedback(1, bar, userMessage));
+  btnDown.addEventListener('click', () => sendChatFeedback(-1, bar, userMessage));
+
+  bar.appendChild(label);
+  bar.appendChild(btnUp);
+  bar.appendChild(btnDown);
+  bar.appendChild(sent);
+
+  afterElement.parentElement.appendChild(bar);
+  scrollChatToBottom();
+}
+
 // ===== CHAT =====
 
 function handleChatKeydown(event) {
@@ -345,8 +376,16 @@ async function sendChatMessage() {
   input.value = '';
   input.style.height = 'auto';
 
+  // Добавляем контекст к сообщению (как при кейсе)
+  const contextName = state.mode === 'target'
+    ? state.selectedTargetName
+    : state.selectedMapName;
+  const displayText = contextName
+    ? `${text}\n📋 ${contextName}`
+    : text;
+
   state.chatMessages.push({ role: 'user', content: text });
-  appendChatMessage('user', text);
+  appendChatMessage('user', displayText);
 
   setInputDisabled(true);
 
@@ -380,6 +419,7 @@ async function sendChatMessage() {
     const fullText = await readSSEStreamToElement(resp, assistantDiv, signal);
     state.chatMessages.push({ role: 'assistant', content: fullText });
     saveChatToSession();
+    appendChatFeedbackBar(assistantDiv, text);
 
   } catch (e) {
     if (e.name === 'AbortError') {
@@ -455,6 +495,48 @@ async function sendFeedback(caseId, vote, bar) {
     if (sent) {
       sent.classList.remove('hidden');
       setTimeout(() => sent.classList.add('hidden'), 2000);
+    }
+  } catch (e) { /* ignore */ }
+}
+
+async function sendChatFeedback(vote, bar, userMessage) {
+  // Блокируем кнопки сразу
+  bar.querySelectorAll('.feedback-btn').forEach(btn => { btn.disabled = true; });
+
+  try {
+    const contextType = (state.mode === 'target') ? 'target' : 'map';
+    const contextName = (state.mode === 'target')
+      ? (state.selectedTargetName || '')
+      : (state.selectedMapName || '');
+
+    const saveResp = await fetch('/api/feedback/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: state.sessionId,
+        vote,
+        user_message: userMessage,
+        context_type: contextType,
+        context_name: contextName || '',
+      }),
+    });
+
+    const sent = bar.querySelector('.feedback-sent');
+    if (sent) {
+      sent.classList.remove('hidden');
+      setTimeout(() => sent.classList.add('hidden'), 2000);
+    }
+
+    // Асинхронно генерируем саммари — не ждём, не блокируем UI
+    if (saveResp.ok) {
+      const saveData = await saveResp.json();
+      if (saveData.id) {
+        fetch('/api/feedback/chat/summarize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: saveData.id, user_message: userMessage }),
+        }).catch(() => { /* ignore summarize errors silently */ });
+      }
     }
   } catch (e) { /* ignore */ }
 }

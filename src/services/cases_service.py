@@ -388,7 +388,6 @@ async def run_case_v2(
         1: _case1_smart_check_v2,
         2: _case2_key_results_v2,
         3: _case3_quarterly_decomp_v2,
-        4: _case4_management_verify_v2,
         5: _case5_conflicts_v2,
         6: _case6_risks_v2,
         7: _case7_express_report_v2,
@@ -396,7 +395,7 @@ async def run_case_v2(
 
     handler = handlers_v2.get(case_id)
     if not handler:
-        raise ValueError(f"Кейс {case_id} не существует. Допустимые кейсы: 1-7.")
+        raise ValueError(f"Кейс {case_id} не существует. Допустимые кейсы: 1, 2, 3, 5, 6, 7.")
 
     return handler(map_context, target_context)
 

@@ -43,9 +43,19 @@ class ChatRequest(BaseModel):
 class FeedbackRequest(BaseModel):
     """Запрос на сохранение оценки (👍/👎) результата кейса."""
 
-    case_id: int = Field(ge=1, le=7, description="ID кейса (1-7)")
+    case_id: int = Field(description="ID кейса (1, 2, 3, 5, 6, 7)")
     session_id: str = Field(description="Уникальный идентификатор сессии браузера")
     vote: Literal[1, -1] = Field(description="Оценка: 1 — положительная 👍, -1 — отрицательная 👎")
+
+
+class ChatFeedbackRequest(BaseModel):
+    """Запрос на сохранение оценки (👍/👎) ответа в свободном чате."""
+
+    session_id: str = Field(description="Уникальный идентификатор сессии браузера")
+    vote: Literal[1, -1] = Field(description="Оценка: 1 — положительная 👍, -1 — отрицательная 👎")
+    user_message: str = Field(description="Полный текст вопроса пользователя")
+    context_type: Literal["map", "target"] = Field(description="Тип контекста: карта или цель")
+    context_name: str = Field(description="Название карты или цели")
 
 
 class JsonUploadRequest(BaseModel):

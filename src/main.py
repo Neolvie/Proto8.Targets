@@ -246,11 +246,11 @@ async def get_map_goals(map_id: int, request: Request):
             "code": node.Code,
             "name": node.Name,
             "progress": node.Progress,
-            "status_name": node.Status.Name if node.Status else "—",
+            "status_name": (node.Status.Name or "—") if node.Status else "—",
             "status_icon": node.Status.Icon if node.Status else None,
             "priority": node.Priority,
-            "responsible_name": node.Responsible.Name if node.Responsible else "—",
-            "period_name": node.Period.Name if node.Period else "—",
+            "responsible_name": (node.Responsible.Name or "—") if node.Responsible else "—",
+            "period_name": (node.Period.Name or "—") if node.Period else "—",
             "key_result_count": node.KeyResultCount,
         }
         for node in graph.Payload.Nodes

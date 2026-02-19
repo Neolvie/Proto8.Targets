@@ -68,19 +68,19 @@ def build_map_context(nodes: List[GoalNode], map_info: TargetsMap) -> str:
         lines.append(f"[{node.Code}] {node.Name}")
 
         # Ответственный и подразделение
-        responsible = node.Responsible.Name if node.Responsible else "—"
-        unit = node.StructuralUnit.Name if node.StructuralUnit else "—"
+        responsible = (node.Responsible.Name or "—") if node.Responsible else "—"
+        unit = (node.StructuralUnit.Name or "—") if node.StructuralUnit else "—"
         lines.append(f"  Ответственный: {responsible} | Подразделение: {unit}")
 
         # Период, приоритет, прогресс, КР
-        period = node.Period.Name if node.Period else "—"
+        period = (node.Period.Name or "—") if node.Period else "—"
         lines.append(
             f"  Период: {period} | Приоритет: {node.Priority} | "
             f"Прогресс: {node.Progress}% | КР: {node.KeyResultCount}"
         )
 
         # Статус
-        status_name = node.Status.Name if node.Status else "—"
+        status_name = (node.Status.Name or "—") if node.Status else "—"
         status_icon = f" {node.Status.Icon}" if node.Status and node.Status.Icon else ""
         lines.append(f"  Статус: {status_name}{status_icon}")
 

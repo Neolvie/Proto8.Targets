@@ -12,9 +12,9 @@ class TargetsMap(BaseModel):
     """Карта целей из списка карт (ITargetsTargetsMaps)."""
 
     Id: int
-    Name: str
-    Code: str
-    PeriodLabel: str
+    Name: str = ""
+    Code: str = ""
+    PeriodLabel: str = ""
     AchievementPercentage: float = 0.0
     Status: str = "Unknown"
     Notes: Optional[str] = None
@@ -28,8 +28,8 @@ class TargetsMap(BaseModel):
 class ResponsiblePerson(BaseModel):
     """Ответственное лицо."""
 
-    Id: int
-    Name: str
+    Id: int = 0
+    Name: Optional[str] = None
     TypeGuid: Optional[str] = None
 
     class Config:
@@ -39,8 +39,8 @@ class ResponsiblePerson(BaseModel):
 class StructuralUnitInfo(BaseModel):
     """Структурное подразделение."""
 
-    Id: int
-    Name: str
+    Id: int = 0
+    Name: Optional[str] = None
     TypeGuid: Optional[str] = None
 
     class Config:
@@ -50,7 +50,7 @@ class StructuralUnitInfo(BaseModel):
 class PeriodInfo(BaseModel):
     """Информация о периоде."""
 
-    Name: str
+    Name: Optional[str] = None
     Code: Optional[str] = None
     TimeFrame: Optional[str] = None
     StartDate: Optional[str] = None
@@ -102,8 +102,8 @@ class GoalNode(BaseModel):
     """Узел карты целей (из GetGoalsMap)."""
 
     TargetId: int
-    Code: str
-    Name: str
+    Code: str = ""
+    Name: str = ""
     ParentId: Optional[str] = None
     ChildIds: List[Any] = Field(default_factory=list)
     Priority: str = "Medium"
@@ -128,7 +128,7 @@ class MapInfo(BaseModel):
     """Информация о карте (из GetGoalsMap)."""
 
     Id: int
-    Name: str
+    Name: str = ""
     Progress: float = 0.0
     TypeGuid: Optional[str] = None
     IsReadOnly: Optional[bool] = None
@@ -162,8 +162,8 @@ class TargetDetail(BaseModel):
     """Расширенная информация по цели (ITargetsTargets)."""
 
     Id: int
-    Name: str
-    Code: str
+    Name: str = ""
+    Code: str = ""
     StatusDescription: str = ""
     PeriodLabel: str = ""
     AchievementPercentage: float = 0.0

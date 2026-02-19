@@ -36,7 +36,10 @@ venv.bak/
 *.swp
 *.swo
 *~
+
+# OS files
 .DS_Store
+Thumbs.db
 
 # Testing
 .pytest_cache/
@@ -47,12 +50,15 @@ htmlcov/
 .nox/
 coverage.xml
 *.cover
+test-results/
+playwright-report/
+playwright/.cache/
 
-# Jupyter Notebook
+# Jupyter
 .ipynb_checkpoints
 *.ipynb
 
-# Environment variables
+# Environment variables (секреты — никогда в гит)
 .env
 .env.local
 .env.*.local
@@ -61,7 +67,7 @@ coverage.xml
 *.log
 logs/
 
-# Docker
+# Docker runtime
 *.pid
 *.seed
 *.pid.lock
@@ -71,11 +77,12 @@ logs/
 *.tmp
 *.temp
 
-# OS files
-Thumbs.db
-.DS_Store
+# SQLite databases (runtime data)
+data/*.db
+data/*.sqlite
+data/*.sqlite3
 
-# Project specific
+# Project data directories (runtime)
 data/uploads/*
 !data/uploads/.gitkeep
 data/cache/*
@@ -83,7 +90,7 @@ data/cache/*
 data/processed/*
 !data/processed/.gitkeep
 
-# Models and large files
+# Models and large binary files
 *.h5
 *.pkl
 *.pickle
@@ -94,13 +101,17 @@ data/processed/*
 docs/_build/
 site/
 
-# AI/ML specific
+# AI/ML experiment tracking
 wandb/
 mlruns/
 .neptune/
 checkpoints/
 
-# Playwright
-test-results/
-playwright-report/
-playwright/.cache/
+# Claude Code local settings (machine-specific)
+.claude/settings.local.json
+
+# Hypothesis artifacts with broken filenames (Windows encoding issues)
+"C*"
+
+# Experimental / scratch directories
+new_hypothesis/

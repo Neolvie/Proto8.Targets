@@ -61,3 +61,48 @@ async def run_chat(
         llm_messages.append({"role": msg.role, "content": msg.content})
 
     return llm_service.stream_completion(llm_messages)
+
+
+async def run_chat_v2(
+    map_context: str | None,
+    target_context: str | None,
+    messages: list[ChatMessage],
+) -> AsyncGenerator[str, None]:
+    """
+    Выполняет запрос к свободному чату с ИИ-помощником (v2 API с строковыми контекстами).
+
+    Args:
+        map_context: Текстовый контекст карты целей.
+        target_context: Текстовый контекст выбранной цели.
+        messages: История сообщений текущей сессии.
+
+    Returns:
+        AsyncGenerator[str, None]: Потоковый генератор фрагментов ответа.
+    """
+    context_parts = []
+
+    if map_context:
+        context_parts.extend([
+            "## Карта целей:",
+            map_context,
+            "",
+        ])
+
+    if target_context:
+        context_parts.extend([
+            "## Выбранная цель:",
+            target_context,
+            "",
+        ])
+
+    if not context_parts:
+        context_parts = ["## Контекст не задан. Ожидается выбор карты или цели."]
+
+    context = "\n".join(context_parts)
+    system_message = f"{CHAT_SYSTEM_PROMPT}\n\n{context}"
+
+    llm_messages = [{"role": "system", "content": system_message}]
+    for msg in messages:
+        llm_messages.append({"role": msg.role, "content": msg.content})
+
+    return llm_service.stream_completion(llm_messages)

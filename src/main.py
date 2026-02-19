@@ -10,14 +10,14 @@ from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.config import get_data_dir
+from src.config import get_data_dir, get_targets_base_url
 from src.models.api import (
     CaseRequest, ChatRequest, FeedbackRequest,
     DataLoadResponse, GoalListItem, JsonUploadRequest,
 )
 from src.services.json_parser import parse_goals_map, format_map_for_llm
 from src.services.docx_parser import parse_docx_bytes, parse_docx_file
-from src.services import cases_service, chat_service
+from src.services import cases_service, chat_service, targets_api, context_builder
 from src.services.metrics_storage import init_db, log_request, save_feedback, get_metrics
 
 # Инициализация базы данных при запуске
@@ -26,8 +26,11 @@ init_db()
 app = FastAPI(
     title="Directum Targets AI Assistant",
     description="ИИ-помощник для работы с целями и KR из Directum Targets",
-    version="1.0.0",
+    version="2.0.0",
 )
+
+# Session-based кэширование (in-memory)
+app.state.cache = {}
 
 app.add_middleware(
     CORSMiddleware,
@@ -108,6 +111,182 @@ async def health():
     return {"status": "ok", "service": "Directum Targets AI Assistant"}
 
 
+# ===== V2 API ENDPOINTS (Targets API Integration) =====
+
+@app.get("/api/maps")
+async def get_maps_endpoint(request: Request, period: Optional[str] = None):
+    """
+    Возвращает список карт целей с фильтрацией по периоду.
+
+    Args:
+        period: Значение PeriodLabel для фильтрации (опционально).
+
+    Returns:
+        dict: {"maps": [...], "periods": [...]}.
+    """
+    # Проверка наличия настроек Targets API
+    if not get_targets_base_url():
+        return {
+            "maps": [],
+            "periods": [],
+            "error": "Targets API не настроен. Установите TARGETS_BASE_URL и TARGETS_TOKEN в .env"
+        }
+
+    session_id = request.headers.get("X-Session-Id", "default")
+    ip = _get_client_ip(request)
+    log_request(ip, "/api/maps")
+
+    # Проверка кэша
+    if session_id not in app.state.cache:
+        app.state.cache[session_id] = {"maps": None, "map_graph": {}, "targets": {}}
+
+    cache = app.state.cache[session_id]
+
+    # Загрузка карт если не в кэше
+    if cache["maps"] is None:
+        maps = await targets_api.get_maps()
+        cache["maps"] = maps
+    else:
+        maps = cache["maps"]
+
+    # Извлечение уникальных периодов
+    periods = sorted(list(set(m.PeriodLabel for m in maps)))
+
+    # Фильтрация по периоду
+    if period:
+        filtered_maps = [m for m in maps if m.PeriodLabel == period]
+    else:
+        filtered_maps = maps
+
+    # Формирование ответа
+    maps_data = [
+        {
+            "id": m.Id,
+            "name": m.Name,
+            "code": m.Code,
+            "period_label": m.PeriodLabel,
+            "achievement_percentage": m.AchievementPercentage,
+            "status": m.Status,
+        }
+        for m in filtered_maps
+    ]
+
+    return {"maps": maps_data, "periods": periods}
+
+
+@app.get("/api/maps/{map_id}/goals")
+async def get_map_goals(map_id: int, request: Request):
+    """
+    Возвращает граф целей карты (список узлов).
+
+    Args:
+        map_id: ID карты.
+
+    Returns:
+        dict: {"map": {...}, "nodes": [...]}.
+    """
+    session_id = request.headers.get("X-Session-Id", "default")
+    ip = _get_client_ip(request)
+    log_request(ip, f"/api/maps/{map_id}/goals")
+
+    if session_id not in app.state.cache:
+        app.state.cache[session_id] = {"maps": None, "map_graph": {}, "targets": {}}
+
+    cache = app.state.cache[session_id]
+
+    # Загрузка графа если не в кэше
+    if map_id not in cache["map_graph"]:
+        graph = await targets_api.get_map_graph(map_id)
+        cache["map_graph"][map_id] = graph
+    else:
+        graph = cache["map_graph"][map_id]
+
+    # Формирование ответа
+    map_info = {
+        "id": graph.Payload.Map.Id,
+        "name": graph.Payload.Map.Name,
+        "progress": graph.Payload.Map.Progress,
+    }
+
+    nodes_data = [
+        {
+            "target_id": node.TargetId,
+            "code": node.Code,
+            "name": node.Name,
+            "progress": node.Progress,
+            "status_name": node.Status.Name if node.Status else "—",
+            "status_icon": node.Status.Icon if node.Status else None,
+            "priority": node.Priority,
+            "responsible_name": node.Responsible.Name if node.Responsible else "—",
+            "period_name": node.Period.Name if node.Period else "—",
+            "key_result_count": node.KeyResultCount,
+        }
+        for node in graph.Payload.Nodes
+    ]
+
+    return {"map": map_info, "nodes": nodes_data}
+
+
+@app.get("/api/targets/{target_id}")
+async def get_target_endpoint(target_id: int, request: Request):
+    """
+    Возвращает расширенную информацию по цели + ключевые результаты.
+
+    Args:
+        target_id: ID цели.
+
+    Returns:
+        dict: {"target": {...}, "key_results": [...]}.
+    """
+    session_id = request.headers.get("X-Session-Id", "default")
+    ip = _get_client_ip(request)
+    log_request(ip, f"/api/targets/{target_id}")
+
+    if session_id not in app.state.cache:
+        app.state.cache[session_id] = {"maps": None, "map_graph": {}, "targets": {}}
+
+    cache = app.state.cache[session_id]
+
+    # Загрузка цели и КР если не в кэше
+    if target_id not in cache["targets"]:
+        target = await targets_api.get_target(target_id)
+        key_results = await targets_api.get_key_results(target_id)
+        cache["targets"][target_id] = {"detail": target, "key_results": key_results}
+    else:
+        target = cache["targets"][target_id]["detail"]
+        key_results = cache["targets"][target_id]["key_results"]
+
+    # Формирование ответа
+    target_data = {
+        "id": target.Id,
+        "name": target.Name,
+        "code": target.Code,
+        "status_description": target.StatusDescription,
+        "period_label": target.PeriodLabel,
+        "achievement_percentage": target.AchievementPercentage,
+        "period_start": target.PeriodStart,
+        "period_end": target.PeriodEnd,
+        "is_personal": target.IsPersonal,
+        "description": target.Description,
+        "notes": target.Notes,
+        "priority": target.Priority,
+    }
+
+    kr_data = [
+        {
+            "description": kr.Description,
+            "achievement_percentage": kr.AchievementPercentage,
+            "metric": kr.Metric,
+            "initial_value": kr.InitialValue,
+            "planned_value": kr.PlannedValue,
+            "actual_value": kr.ActualValue,
+        }
+        for kr in key_results
+    ]
+
+    return {"target": target_data, "key_results": kr_data}
+
+
 @app.get("/api/data/test")
 async def load_test_data(request: Request):
     """
@@ -155,74 +334,23 @@ async def load_test_data(request: Request):
     )
 
 
-@app.post("/api/data/upload")
-async def upload_data(
-    request: Request,
-    json_file: Optional[UploadFile] = File(default=None),
-    docx_file: Optional[UploadFile] = File(default=None),
-    json_text: Optional[str] = Form(default=None),
-):
-    """
-    Загружает пользовательские файлы: JSON-карту целей и/или DOCX-описание.
-
-    Принимает JSON как файл или как текст в форм-данных.
-
-    Returns:
-        DataLoadResponse: Объект с картой целей, содержимым DOCX и списком целей.
-
-    Raises:
-        HTTPException: Если данные не предоставлены или невалидны.
-    """
-    # Получаем JSON
-    raw_json_text = None
-    if json_file and json_file.filename:
-        content = await json_file.read()
-        raw_json_text = content.decode("utf-8")
-    elif json_text:
-        raw_json_text = json_text
-
-    if not raw_json_text:
-        raise HTTPException(status_code=422, detail="Необходимо предоставить JSON-файл или текст карты целей")
-
-    try:
-        goals_map = parse_goals_map(raw_json_text)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-
-    # Получаем DOCX если предоставлен
-    docx_content = None
-    if docx_file and docx_file.filename:
-        docx_bytes = await docx_file.read()
-        try:
-            docx_content = parse_docx_bytes(docx_bytes)
-        except ValueError:
-            docx_content = None  # Не прерываем загрузку если DOCX невалиден
-
-    ip = _get_client_ip(request)
-    log_request(ip, "/api/data/upload")
-
-    return DataLoadResponse(
-        goals_map=goals_map,
-        docx_content=docx_content,
-        goals_list=_goals_to_list(goals_map),
-        map_summary=f"Карта: {goals_map.map_name} | Целей: {len(goals_map.nodes)} | Прогресс: {goals_map.total_progress:.1f}%",
-    )
 
 
 @app.post("/api/cases/{case_id}")
-async def run_case(case_id: int, request: Request, body: CaseRequest):
+async def run_case(case_id: int, request: Request):
     """
     Запускает один из 7 кейсов OKR-анализа с потоковым ответом (SSE).
 
+    Поддерживает v1 (с goals_map) и v2 (с map_id/target_id) форматы запросов.
+
     Args:
         case_id: Номер кейса (1-7).
-        body: Данные запроса с картой целей и ID выбранной цели.
 
     Returns:
         StreamingResponse: Поток текстовых фрагментов в формате SSE.
 
     Raises:
-        HTTPException: Если кейс не найден или цель не выбрана.
+        HTTPException: Если кейс не найден или контекст не задан.
     """
     if case_id < 1 or case_id > 7:
         raise HTTPException(status_code=400, detail="Номер кейса должен быть от 1 до 7")
@@ -230,13 +358,72 @@ async def run_case(case_id: int, request: Request, body: CaseRequest):
     ip = _get_client_ip(request)
     log_request(ip, f"/api/cases/{case_id}", case_id=case_id)
 
+    # Получаем тело запроса как JSON
+    body_json = await request.json()
+
+    # Определяем, v1 или v2 формат
+    # v2 формат: mode, map_id, target_id, session_id
+    # v1 формат: goals_map, selected_goal_id, docx_content
+    is_v2 = "mode" in body_json or "map_id" in body_json or "target_id" in body_json
+
     try:
-        generator = await cases_service.run_case(
-            case_id=case_id,
-            goals_map=body.goals_map,
-            selected_goal_id=body.selected_goal_id,
-            docx_content=body.docx_content,
-        )
+        if is_v2:
+            # V2 API: используем кэш и строковые контексты
+            session_id = request.headers.get("X-Session-Id", "default")
+            mode = body_json.get("mode")
+            map_id = body_json.get("map_id")
+            target_id = body_json.get("target_id")
+
+            if session_id not in app.state.cache:
+                raise HTTPException(status_code=400, detail="Сессия не найдена. Загрузите карту целей.")
+
+            cache = app.state.cache[session_id]
+
+            # Строим контексты
+            map_context = None
+            target_context = None
+
+            if mode == "map" and map_id is not None:
+                # Режим карты — используем граф карты
+                if map_id not in cache["map_graph"]:
+                    raise HTTPException(status_code=400, detail=f"Карта {map_id} не загружена в сессии.")
+                graph = cache["map_graph"][map_id]
+                # Формируем текстовый контекст карты
+                map_context = context_builder.build_map_context(
+                    nodes=graph.Payload.Nodes,
+                    map_info=cache["maps"][0] if cache["maps"] else None  # Находим карту по ID
+                )
+                # Ищем карту в списке
+                for m in cache["maps"]:
+                    if m.Id == map_id:
+                        map_context = context_builder.build_map_context(graph.Payload.Nodes, m)
+                        break
+
+            elif mode == "target" and target_id is not None:
+                # Режим цели — используем детали цели
+                if target_id not in cache["targets"]:
+                    raise HTTPException(status_code=400, detail=f"Цель {target_id} не загружена в сессии.")
+                target_data = cache["targets"][target_id]
+                target_context = context_builder.build_target_context(
+                    target=target_data["detail"],
+                    key_results=target_data["key_results"]
+                )
+
+            generator = await cases_service.run_case_v2(
+                case_id=case_id,
+                map_context=map_context,
+                target_context=target_context,
+            )
+        else:
+            # V1 API: используем GoalsMap напрямую
+            from src.models.api import CaseRequest
+            body = CaseRequest(**body_json)
+            generator = await cases_service.run_case(
+                case_id=case_id,
+                goals_map=body.goals_map,
+                selected_goal_id=body.selected_goal_id,
+                docx_content=body.docx_content,
+            )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
@@ -263,12 +450,11 @@ async def run_case(case_id: int, request: Request, body: CaseRequest):
 
 
 @app.post("/api/chat")
-async def chat(request: Request, body: ChatRequest):
+async def chat(request: Request):
     """
     Выполняет запрос к свободному чату с ИИ-помощником с потоковым ответом (SSE).
 
-    Args:
-        body: Данные запроса с картой целей, историей сообщений и содержимым DOCX.
+    Поддерживает v1 (с goals_map) и v2 (с map_id/target_id) форматы запросов.
 
     Returns:
         StreamingResponse: Поток текстовых фрагментов в формате SSE.
@@ -276,12 +462,64 @@ async def chat(request: Request, body: ChatRequest):
     ip = _get_client_ip(request)
     log_request(ip, "/api/chat")
 
+    # Получаем тело запроса как JSON
+    body_json = await request.json()
+
+    # Определяем, v1 или v2 формат
+    is_v2 = "mode" in body_json or "map_id" in body_json or "target_id" in body_json
+
     try:
-        generator = await chat_service.run_chat(
-            goals_map=body.goals_map,
-            messages=body.messages,
-            docx_content=body.docx_content,
-        )
+        if is_v2:
+            # V2 API
+            from src.models.api import ChatMessage
+            session_id = request.headers.get("X-Session-Id", "default")
+            mode = body_json.get("mode")
+            map_id = body_json.get("map_id")
+            target_id = body_json.get("target_id")
+            messages = [ChatMessage(**m) for m in body_json.get("messages", [])]
+
+            if session_id not in app.state.cache:
+                raise HTTPException(status_code=400, detail="Сессия не найдена. Загрузите карту целей.")
+
+            cache = app.state.cache[session_id]
+
+            # Строим контексты
+            map_context = None
+            target_context = None
+
+            if mode == "map" and map_id is not None:
+                if map_id not in cache["map_graph"]:
+                    raise HTTPException(status_code=400, detail=f"Карта {map_id} не загружена в сессии.")
+                graph = cache["map_graph"][map_id]
+                # Ищем карту в списке
+                for m in cache["maps"]:
+                    if m.Id == map_id:
+                        map_context = context_builder.build_map_context(graph.Payload.Nodes, m)
+                        break
+
+            elif mode == "target" and target_id is not None:
+                if target_id not in cache["targets"]:
+                    raise HTTPException(status_code=400, detail=f"Цель {target_id} не загружена в сессии.")
+                target_data = cache["targets"][target_id]
+                target_context = context_builder.build_target_context(
+                    target=target_data["detail"],
+                    key_results=target_data["key_results"]
+                )
+
+            generator = await chat_service.run_chat_v2(
+                map_context=map_context,
+                target_context=target_context,
+                messages=messages,
+            )
+        else:
+            # V1 API
+            from src.models.api import ChatRequest
+            body = ChatRequest(**body_json)
+            generator = await chat_service.run_chat(
+                goals_map=body.goals_map,
+                messages=body.messages,
+                docx_content=body.docx_content,
+            )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

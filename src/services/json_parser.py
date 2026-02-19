@@ -2,7 +2,7 @@
 
 import json
 from typing import Any
-from src.models.targets import GoalNode, GoalsMap
+from src.models.targets import GoalNodeV1, GoalsMap
 
 
 def parse_goals_map(json_text: str) -> GoalsMap:
@@ -57,7 +57,7 @@ def parse_goals_map(json_text: str) -> GoalsMap:
     )
 
 
-def _parse_node(raw: dict[str, Any]) -> GoalNode:
+def _parse_node(raw: dict[str, Any]) -> GoalNodeV1:
     """
     Разбирает один узел карты целей из сырого словаря.
 
@@ -65,7 +65,7 @@ def _parse_node(raw: dict[str, Any]) -> GoalNode:
         raw: Словарь с данными одного узла.
 
     Returns:
-        GoalNode: Объект узла карты целей.
+        GoalNodeV1: Объект узла карты целей (v1 совместимость).
     """
     status = raw.get("Status", {}) or {}
     last_achievement = status.get("LastAchievementStatus", {}) or {}
@@ -82,7 +82,7 @@ def _parse_node(raw: dict[str, Any]) -> GoalNode:
 
     child_ids = [str(c) for c in (raw.get("ChildIds") or [])]
 
-    return GoalNode(
+    return GoalNodeV1(
         id=str(raw.get("Id", "")),
         target_id=int(raw.get("TargetId", 0)),
         code=raw.get("Code", ""),
@@ -125,7 +125,7 @@ def format_map_for_llm(goals_map: GoalsMap, selected_goal_id: str | None = None)
     root_nodes = [n for n in goals_map.nodes if n.parent_id is None]
     node_map = {n.id: n for n in goals_map.nodes}
 
-    def format_node(node: GoalNode, indent: int = 0) -> None:
+    def format_node(node: GoalNodeV1, indent: int = 0) -> None:
         prefix = "  " * indent + ("- " if indent > 0 else "")
         marker = " [ВЫБРАННАЯ ЦЕЛЬ]" if node.id == selected_goal_id else ""
         lines.append(f"{prefix}**{node.code}**: {node.name}{marker}")
@@ -154,7 +154,7 @@ def format_map_for_llm(goals_map: GoalsMap, selected_goal_id: str | None = None)
     return "\n".join(lines)
 
 
-def get_goal_by_id(goals_map: GoalsMap, goal_id: str) -> GoalNode | None:
+def get_goal_by_id(goals_map: GoalsMap, goal_id: str) -> GoalNodeV1 | None:
     """
     Возвращает узел цели по её ID.
 
@@ -163,7 +163,7 @@ def get_goal_by_id(goals_map: GoalsMap, goal_id: str) -> GoalNode | None:
         goal_id: ID искомой цели.
 
     Returns:
-        GoalNode или None если цель не найдена.
+        GoalNodeV1 или None если цель не найдена.
     """
     for node in goals_map.nodes:
         if node.id == goal_id:

@@ -1,248 +1,321 @@
-/* ИИ-помощник Directum Targets — фронтенд логика */
+/* ИИ-помощник Directum Targets v2 — фронтенд логика */
 
-// Состояние приложения
+// State
 const state = {
-  goalsMap: null,
-  docxContent: null,
-  goalsList: [],
-  mapSummary: '',
-  sessionId: null,
-  currentCaseId: null,
+  selectedMapId: null,
+  selectedMapContext: null,
+  selectedTargetId: null,
+  selectedTargetContext: null,
+  mode: null, // 'map' | 'target'
   chatMessages: [],
-  jsonFile: null,
-  docxFile: null,
-  caseAbortController: null,
+  currentAbortController: null,
+  sessionId: null,
+  allMaps: [],
+  selectedMapName: '',
+  selectedTargetName: '',
 };
 
-// Инициализация сессии
+const CASE_NAMES = {
+  1: 'Формулировка описания цели',
+  2: 'Формулировка ключевых результатов',
+  3: 'Декомпозиция на квартальные цели',
+  4: 'Верификация по ожиданиям руководства',
+  5: 'Конфликты и слепые зоны стратегии',
+  6: 'Риски достижения цели',
+  7: 'Экспресс-отчёт по целям',
+};
+
+// ===== SESSION =====
+
 function initSession() {
-  let sid = sessionStorage.getItem('targets_session_id');
+  let sid = sessionStorage.getItem('targets_v2_session_id');
   if (!sid) {
     sid = 'sess_' + Date.now() + '_' + Math.random().toString(36).slice(2);
-    sessionStorage.setItem('targets_session_id', sid);
+    sessionStorage.setItem('targets_v2_session_id', sid);
   }
   state.sessionId = sid;
 
-  // Восстановление чата
-  const savedMessages = sessionStorage.getItem('targets_chat');
+  const savedMessages = sessionStorage.getItem('targets_v2_chat');
   if (savedMessages) {
     try {
       state.chatMessages = JSON.parse(savedMessages);
       restoreChatMessages();
-    } catch (e) {
-      // Игнорируем ошибки восстановления
-    }
+    } catch (e) { /* ignore */ }
   }
 }
 
-// ===== ЗАГРУЗКА ДАННЫХ =====
+// ===== API: MAPS =====
 
-async function loadTestData() {
-  const btn = document.getElementById('btn-load-test');
-  btn.disabled = true;
-  btn.textContent = 'Загрузка...';
-  showGlobalAlert('info', 'Загружаю тестовую карту целей Ario 2026...');
-
+async function loadMaps() {
   try {
-    const resp = await fetch('/api/data/test');
-    if (!resp.ok) {
-      const err = await resp.json();
-      throw new Error(err.detail || 'Ошибка загрузки');
-    }
+    const resp = await fetch('/api/maps', { headers: { 'X-Session-Id': state.sessionId } });
+    if (!resp.ok) throw new Error('Ошибка загрузки карт');
+
     const data = await resp.json();
-    applyLoadedData(data);
-    hideGlobalAlert();
+
+    if (data.error) {
+      document.getElementById('maps-select').innerHTML =
+        `<option value="">${data.error}</option>`;
+      return;
+    }
+
+    state.allMaps = data.maps;
+
+    // Periods
+    const periodFilter = document.getElementById('period-filter');
+    periodFilter.innerHTML = '<option value="">— все периоды —</option>';
+    for (const period of data.periods) {
+      const opt = document.createElement('option');
+      opt.value = period;
+      opt.textContent = period;
+      periodFilter.appendChild(opt);
+    }
+
+    populateMapsDropdown(state.allMaps);
   } catch (e) {
-    showGlobalAlert('error', 'Ошибка загрузки тестовых данных: ' + e.message);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Использовать тестовую карту целей: Карта целей Ario 2026';
+    document.getElementById('maps-select').innerHTML =
+      `<option value="">Ошибка: ${e.message}</option>`;
   }
 }
 
-async function uploadUserData() {
-  const jsonText = document.getElementById('json-text-input').value.trim();
-  const jsonFile = state.jsonFile;
-  const docxFile = state.docxFile;
-
-  if (!jsonText && !jsonFile) {
-    showGlobalAlert('error', 'Необходимо загрузить JSON-файл карты целей или вставить JSON-текст');
-    return;
-  }
-
-  const formData = new FormData();
-  if (jsonFile) {
-    formData.append('json_file', jsonFile);
-  } else {
-    formData.append('json_text', jsonText);
-  }
-  if (docxFile) {
-    formData.append('docx_file', docxFile);
-  }
-
-  showGlobalAlert('info', 'Загружаю и парсю карту целей...');
-
-  try {
-    const resp = await fetch('/api/data/upload', { method: 'POST', body: formData });
-    if (!resp.ok) {
-      const err = await resp.json();
-      throw new Error(err.detail || 'Ошибка загрузки');
-    }
-    const data = await resp.json();
-    applyLoadedData(data);
-    hideGlobalAlert();
-  } catch (e) {
-    showGlobalAlert('error', 'Ошибка: ' + e.message);
-  }
-}
-
-function applyLoadedData(data) {
-  state.goalsMap = data.goals_map;
-  state.docxContent = data.docx_content;
-  state.goalsList = data.goals_list;
-  state.mapSummary = data.map_summary;
-
-  // Заполняем dropdown список целей
-  const select = document.getElementById('goal-select');
-  select.innerHTML = '<option value="">— выберите цель для кейсов 1-4 и 6 —</option>';
-  for (const goal of data.goals_list) {
+function populateMapsDropdown(maps) {
+  const sel = document.getElementById('maps-select');
+  const prevValue = sel.value;
+  sel.innerHTML = '<option value="">— выберите карту —</option>';
+  for (const map of maps) {
     const opt = document.createElement('option');
-    opt.value = goal.id;
-    opt.textContent = `${goal.code}: ${goal.name} (${goal.progress.toFixed(0)}%)`;
-    select.appendChild(opt);
+    opt.value = map.id;
+    opt.textContent = `${map.name} (${map.achievement_percentage.toFixed(0)}%)`;
+    sel.appendChild(opt);
+  }
+  if (prevValue && maps.find(m => String(m.id) === prevValue)) {
+    sel.value = prevValue;
+  }
+}
+
+function filterMapsByPeriod() {
+  const period = document.getElementById('period-filter').value;
+  const filtered = period ? state.allMaps.filter(m => m.period_label === period) : state.allMaps;
+  populateMapsDropdown(filtered);
+}
+
+async function onMapSelectChange() {
+  const sel = document.getElementById('maps-select');
+  const mapId = parseInt(sel.value);
+  if (!mapId) {
+    state.selectedMapId = null;
+    state.selectedMapContext = null;
+    state.selectedTargetId = null;
+    state.selectedTargetContext = null;
+    state.mode = null;
+    document.getElementById('goals-section').classList.add('hidden');
+    updateContextIndicator();
+    updateCaseButtons();
+    return;
+  }
+  const map = state.allMaps.find(m => m.id === mapId);
+  await selectMap(mapId, map ? map.name : String(mapId));
+}
+
+async function selectMap(mapId, mapName) {
+  state.selectedMapId = mapId;
+  state.selectedMapName = mapName;
+  state.selectedTargetId = null;
+  state.selectedTargetContext = null;
+  state.mode = 'map';
+
+  document.querySelectorAll('.goal-item').forEach(el => el.classList.remove('active'));
+
+  // Show loading spinner
+  const goalsList = document.getElementById('goals-list');
+  goalsList.innerHTML = '<div class="goals-loading"><span class="spinner"></span> Загрузка целей...</div>';
+  document.getElementById('goals-section').classList.remove('hidden');
+  updateCaseButtons();
+
+  try {
+    const resp = await fetch(`/api/maps/${mapId}/goals`, {
+      headers: { 'X-Session-Id': state.sessionId }
+    });
+    if (!resp.ok) throw new Error('Ошибка загрузки целей');
+
+    const data = await resp.json();
+    state.selectedMapContext = data.map_context ||
+      `Карта: ${data.map.name} | Прогресс: ${data.map.progress}%`;
+
+    goalsList.innerHTML = '';
+    for (const node of data.nodes) {
+      const item = document.createElement('div');
+      item.className = 'goal-item';
+      item.dataset.targetId = node.target_id;
+      item.onclick = () => selectGoal(node.target_id, node.code, node.name);
+
+      const statusKey = node.status_icon ? node.status_icon.toLowerCase() : 'none';
+      const dotClass = `goal-status-dot status-${statusKey}`;
+      item.innerHTML = `
+        <div class="goal-header">
+          <span class="goal-code">${node.code}</span>
+          <span class="${dotClass}" title="${node.status_icon || ''}"></span>
+        </div>
+        <div class="goal-name">${node.name}</div>
+        <div class="goal-meta">Прогресс: ${node.progress.toFixed(0)}% | КР: ${node.key_result_count}</div>
+      `;
+      goalsList.appendChild(item);
+    }
+
+    updateContextIndicator();
+    updateCaseButtons();
+  } catch (e) {
+    goalsList.innerHTML = `<div style="color:var(--color-danger);font-size:12px;padding:8px 4px">Ошибка: ${e.message}</div>`;
+  }
+}
+
+async function selectGoal(targetId, code, name) {
+  // Повторный клик по активной цели — развыбрать, вернуться в режим карты
+  if (state.selectedTargetId === targetId) {
+    document.querySelectorAll('.goal-item').forEach(el => el.classList.remove('active'));
+    state.selectedTargetId = null;
+    state.selectedTargetContext = null;
+    state.selectedTargetName = '';
+    state.mode = 'map';
+    updateContextIndicator();
+    updateCaseButtons();
+    return;
   }
 
-  // Обновляем инфо о карте
-  document.getElementById('map-info').textContent = data.map_summary;
+  document.querySelectorAll('.goal-item').forEach(el => el.classList.remove('active'));
+  document.querySelector(`.goal-item[data-target-id="${targetId}"]`)?.classList.add('active');
 
-  // Переключаемся на основной экран
-  showSection('section-main');
+  state.selectedTargetId = targetId;
+  state.selectedTargetName = `[${code}] ${name}`;
+  state.mode = 'target';
+
+  try {
+    const resp = await fetch(`/api/targets/${targetId}`, {
+      headers: { 'X-Session-Id': state.sessionId }
+    });
+    if (!resp.ok) throw new Error('Ошибка загрузки цели');
+
+    const data = await resp.json();
+    state.selectedTargetContext = data.target_context ||
+      `Цель: [${data.target.code}] ${data.target.name}\nПрогресс: ${data.target.achievement_percentage}%`;
+
+    updateContextIndicator();
+    updateCaseButtons();
+  } catch (e) {
+    alert('Ошибка загрузки цели: ' + e.message);
+  }
 }
 
-function resetApp() {
-  state.goalsMap = null;
-  state.docxContent = null;
-  state.goalsList = [];
-  state.jsonFile = null;
-  state.docxFile = null;
-
-  // Сбрасываем форму
-  document.getElementById('json-text-input').value = '';
-  document.getElementById('json-zone').classList.remove('has-file');
-  document.getElementById('json-zone-title').textContent = 'Перетащите JSON-файл';
-  document.getElementById('docx-zone').classList.remove('has-file');
-  document.getElementById('docx-zone-title').textContent = 'Перетащите DOCX-файл';
-
-  hideResult();
-  showSection('section-upload');
-  hideGlobalAlert();
-}
-
-// ===== УПРАВЛЕНИЕ ФАЙЛАМИ =====
-
-function handleFileSelect(event, type) {
-  const file = event.target.files[0];
-  if (!file) return;
-  setFile(type, file);
-}
-
-function handleFileDrop(event, type) {
-  event.preventDefault();
-  const file = event.dataTransfer.files[0];
-  if (!file) return;
-  setFile(type, file);
-  event.target.classList.remove('drag-over');
-}
-
-function handleDragOver(event) {
-  event.preventDefault();
-  event.target.closest('.upload-zone')?.classList.add('drag-over');
-}
-
-function handleDragLeave(event) {
-  event.target.closest('.upload-zone')?.classList.remove('drag-over');
-}
-
-function setFile(type, file) {
-  if (type === 'json') {
-    state.jsonFile = file;
-    document.getElementById('json-zone').classList.add('has-file');
-    document.getElementById('json-zone-title').textContent = file.name;
+function updateContextIndicator() {
+  const el = document.getElementById('context-text');
+  if (state.mode === 'target') {
+    el.textContent = state.selectedTargetName;
+  } else if (state.mode === 'map') {
+    el.textContent = state.selectedMapName;
   } else {
-    state.docxFile = file;
-    document.getElementById('docx-zone').classList.add('has-file');
-    document.getElementById('docx-zone-title').textContent = file.name;
+    el.textContent = '— нет выбора —';
   }
 }
 
-// ===== КЕЙСЫ =====
+function updateCaseButtons() {
+  const hasTarget = !!state.selectedTargetId;
+  const hasMap = !!state.selectedMapId;
 
-async function runCase(caseId) {
-  if (!state.goalsMap) {
-    showGlobalAlert('error', 'Сначала загрузите карту целей');
-    return;
-  }
+  document.querySelectorAll('.case-btn').forEach(btn => {
+    const mode = btn.dataset.mode;
+    if (hasTarget) {
+      // Цель выбрана: активны только кейсы цели, кейсы карты — нет
+      btn.disabled = mode !== 'target';
+    } else if (hasMap) {
+      // Только карта: активны только кейсы карты
+      btn.disabled = mode !== 'map';
+    } else {
+      btn.disabled = true;
+    }
+  });
+}
 
-  // Для кейсов 1-4, 6 нужна выбранная цель
-  const needsGoal = [1, 2, 3, 4, 6].includes(caseId);
-  const selectedGoalId = document.getElementById('goal-select').value;
+// ===== CASES IN CHAT =====
 
-  if (needsGoal && !selectedGoalId) {
-    showGlobalAlert('error', `Кейс ${caseId} требует выбора конкретной цели. Выберите цель из списка выше.`);
-    return;
-  }
+async function runCaseInChat(caseId) {
+  if (!state.selectedMapId && !state.selectedTargetId) return;
 
-  hideGlobalAlert();
+  if (state.currentAbortController) state.currentAbortController.abort();
+  state.currentAbortController = new AbortController();
+  const signal = state.currentAbortController.signal;
 
-  // Отменяем предыдущий запрос если он ещё идёт
-  if (state.caseAbortController) {
-    state.caseAbortController.abort();
-  }
-  state.caseAbortController = new AbortController();
-  const signal = state.caseAbortController.signal;
+  // Reset conversation history — each case is a fresh request
+  state.chatMessages = [];
+  sessionStorage.removeItem('targets_v2_chat');
+  document.getElementById('chat-messages').innerHTML = '';
 
-  state.currentCaseId = caseId;
-  const caseNames = {
-    1: 'Кейс 1: Формулировка описания цели',
-    2: 'Кейс 2: Формулировка ключевых результатов',
-    3: 'Кейс 3: Декомпозиция на квартальные цели',
-    4: 'Кейс 4: Верификация по ожиданиям руководства',
-    5: 'Кейс 5: Конфликты и слепые зоны стратегии',
-    6: 'Кейс 6: Риски достижения цели',
-    7: 'Кейс 7: Экспресс-отчёт по целям',
-  };
+  const caseName = CASE_NAMES[caseId];
+  const contextName = state.mode === 'target'
+    ? state.selectedTargetName
+    : state.selectedMapName;
+  const userLabel = `▶ Кейс ${caseId}: ${caseName}\n📋 ${contextName}`;
 
-  showResult(caseNames[caseId]);
+  state.chatMessages.push({ role: 'user', content: userLabel });
+  appendChatMessage('user', userLabel);
 
-  const body = {
-    goals_map: state.goalsMap,
-    selected_goal_id: selectedGoalId || null,
-    docx_content: state.docxContent || null,
-  };
+  const assistantDiv = appendChatMessage('assistant', '');
+  assistantDiv.innerHTML = '<span class="spinner"></span>';
+
+  setInputDisabled(true);
 
   try {
     const resp = await fetch(`/api/cases/${caseId}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Id': state.sessionId,
+      },
+      body: JSON.stringify({
+        mode: state.mode,
+        map_id: state.selectedMapId,
+        target_id: state.selectedTargetId,
+      }),
       signal,
     });
 
     if (!resp.ok) {
-      const err = await resp.json();
-      throw new Error(err.detail || 'Ошибка запроса');
+      const errText = await resp.text();
+      let detail = errText;
+      try { detail = JSON.parse(errText).detail; } catch (e) { /* ignore */ }
+      throw new Error(detail || `HTTP ${resp.status}`);
     }
 
-    await readSSEStream(resp, 'result-content', signal);
-    if (!signal.aborted) showFeedbackBar();
+    assistantDiv.innerHTML = '';
+    const fullText = await readSSEStreamToElement(resp, assistantDiv, signal);
+    state.chatMessages.push({ role: 'assistant', content: fullText });
+    saveChatToSession();
+    appendFeedbackBar(assistantDiv, caseId);
+
   } catch (e) {
-    if (e.name === 'AbortError') return; // Запрос отменён — тихо игнорируем
-    document.getElementById('result-content').textContent = 'Ошибка: ' + e.message;
-    hideLoading();
+    if (e.name === 'AbortError') {
+      assistantDiv.innerHTML = '<em style="color:var(--color-text-muted)">Прервано</em>';
+      return;
+    }
+    assistantDiv.innerHTML = `<p style="color:var(--color-danger)">Ошибка: ${e.message}</p>`;
+  } finally {
+    setInputDisabled(false);
   }
 }
 
-// ===== ЧАТ =====
+function appendFeedbackBar(afterElement, caseId) {
+  const bar = document.createElement('div');
+  bar.className = 'feedback-bar';
+  bar.innerHTML = `
+    <span class="feedback-label">Оцените результат:</span>
+    <button class="feedback-btn" onclick="sendFeedback(${caseId}, 1, this.parentElement)">👍</button>
+    <button class="feedback-btn" onclick="sendFeedback(${caseId}, -1, this.parentElement)">👎</button>
+    <span class="feedback-sent hidden">Оценка сохранена</span>
+  `;
+  afterElement.parentElement.appendChild(bar);
+  scrollChatToBottom();
+}
+
+// ===== CHAT =====
 
 function handleChatKeydown(event) {
   if (event.key === 'Enter' && !event.shiftKey) {
@@ -251,74 +324,85 @@ function handleChatKeydown(event) {
   }
 }
 
+function autoResizeTextarea(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
 async function sendChatMessage() {
   const input = document.getElementById('chat-input');
   const text = input.value.trim();
   if (!text) return;
-  if (!state.goalsMap) {
-    showGlobalAlert('error', 'Сначала загрузите карту целей');
+  if (!state.selectedMapId && !state.selectedTargetId) {
+    alert('Выберите карту или цель слева');
     return;
   }
+
+  if (state.currentAbortController) state.currentAbortController.abort();
+  state.currentAbortController = new AbortController();
+  const signal = state.currentAbortController.signal;
 
   input.value = '';
   input.style.height = 'auto';
 
-  // Добавляем сообщение пользователя
   state.chatMessages.push({ role: 'user', content: text });
   appendChatMessage('user', text);
 
-  const btn = document.getElementById('btn-chat-send');
-  btn.disabled = true;
-  input.disabled = true;
+  setInputDisabled(true);
 
-  // Добавляем сообщение-заглушку для ответа
   const assistantDiv = appendChatMessage('assistant', '');
-  assistantDiv.classList.add('loading-msg');
   assistantDiv.innerHTML = '<span class="spinner"></span>';
-
-  const body = {
-    goals_map: state.goalsMap,
-    docx_content: state.docxContent || null,
-    messages: state.chatMessages,
-  };
 
   try {
     const resp = await fetch('/api/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Id': state.sessionId,
+      },
+      body: JSON.stringify({
+        mode: state.mode,
+        map_id: state.selectedMapId,
+        target_id: state.selectedTargetId,
+        messages: state.chatMessages,
+      }),
+      signal,
     });
 
     if (!resp.ok) {
-      const err = await resp.json();
-      throw new Error(err.detail || 'Ошибка запроса');
+      const errText = await resp.text();
+      let detail = errText;
+      try { detail = JSON.parse(errText).detail; } catch (e) { /* ignore */ }
+      throw new Error(detail || `HTTP ${resp.status}`);
     }
 
-    let fullText = '';
     assistantDiv.innerHTML = '';
-    assistantDiv.classList.remove('loading-msg');
-    await readSSEStreamToElement(resp, (chunk) => {
-      fullText += chunk;
-      assistantDiv.innerHTML = renderMarkdown(fullText);
-      scrollChatToBottom();
-    });
-
+    const fullText = await readSSEStreamToElement(resp, assistantDiv, signal);
     state.chatMessages.push({ role: 'assistant', content: fullText });
     saveChatToSession();
+
   } catch (e) {
-    assistantDiv.textContent = 'Ошибка: ' + e.message;
+    if (e.name === 'AbortError') {
+      assistantDiv.innerHTML = '<em style="color:var(--color-text-muted)">Прервано</em>';
+      return;
+    }
+    assistantDiv.innerHTML = `<p style="color:var(--color-danger)">Ошибка: ${e.message}</p>`;
   } finally {
-    btn.disabled = false;
-    input.disabled = false;
-    input.focus();
+    setInputDisabled(false);
+    document.getElementById('chat-input').focus();
   }
+}
+
+function setInputDisabled(disabled) {
+  document.getElementById('btn-chat-send').disabled = disabled;
+  document.getElementById('chat-input').disabled = disabled;
 }
 
 function appendChatMessage(role, text) {
   const messages = document.getElementById('chat-messages');
   const div = document.createElement('div');
   div.className = `chat-message ${role}`;
-  div.textContent = text;
+  if (text) div.textContent = text;
   messages.appendChild(div);
   scrollChatToBottom();
   return div;
@@ -331,256 +415,197 @@ function scrollChatToBottom() {
 
 function restoreChatMessages() {
   const container = document.getElementById('chat-messages');
-  // Оставляем только приветствие
-  const welcome = container.firstChild;
   container.innerHTML = '';
-  if (welcome) container.appendChild(welcome);
   for (const msg of state.chatMessages) {
-    appendChatMessage(msg.role, msg.content);
+    const div = document.createElement('div');
+    div.className = `chat-message ${msg.role}`;
+    if (msg.role === 'assistant') {
+      div.innerHTML = renderMarkdown(msg.content);
+    } else {
+      div.textContent = msg.content;
+    }
+    container.appendChild(div);
   }
 }
 
 function saveChatToSession() {
-  sessionStorage.setItem('targets_chat', JSON.stringify(state.chatMessages));
+  sessionStorage.setItem('targets_v2_chat', JSON.stringify(state.chatMessages));
 }
 
-// ===== ОЦЕНКА (FEEDBACK) =====
+function resetConversation() {
+  state.chatMessages = [];
+  sessionStorage.removeItem('targets_v2_chat');
+  document.getElementById('chat-messages').innerHTML = `
+    <div class="chat-message assistant">
+      Здравствуйте! Выберите карту или цель слева, затем задайте вопрос или нажмите кнопку кейса.
+    </div>
+  `;
+}
 
-async function sendFeedback(vote) {
-  if (!state.currentCaseId) return;
+// ===== FEEDBACK =====
 
-  const btnUp = document.getElementById('btn-thumbs-up');
-  const btnDown = document.getElementById('btn-thumbs-down');
-  const sentLabel = document.getElementById('feedback-sent');
-
-  btnUp.classList.remove('active-pos');
-  btnDown.classList.remove('active-neg');
-
-  if (vote === 1) {
-    btnUp.classList.add('active-pos');
-  } else {
-    btnDown.classList.add('active-neg');
-  }
-
+async function sendFeedback(caseId, vote, bar) {
   try {
     await fetch('/api/feedback', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        case_id: state.currentCaseId,
-        session_id: state.sessionId,
-        vote: vote,
-      }),
+      body: JSON.stringify({ case_id: caseId, session_id: state.sessionId, vote }),
     });
-    sentLabel.classList.remove('hidden');
-    setTimeout(() => sentLabel.classList.add('hidden'), 2000);
-  } catch (e) {
-    // Не блокируем UI при ошибке сохранения оценки
-  }
+    const sent = bar.querySelector('.feedback-sent');
+    if (sent) {
+      sent.classList.remove('hidden');
+      setTimeout(() => sent.classList.add('hidden'), 2000);
+    }
+  } catch (e) { /* ignore */ }
 }
 
-// ===== MARKDOWN РЕНДЕРЕР =====
+// ===== MARKDOWN RENDERER =====
 
 function renderMarkdown(text) {
   const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
   const lines = text.split('\n');
   let html = '';
   let inList = false;
   let inOrderedList = false;
+  let tableBuffer = []; // накапливаем строки таблицы
 
   const closeList = () => {
-    if (inList)        { html += '</ul>'; inList = false; }
+    if (inList) { html += '</ul>'; inList = false; }
     if (inOrderedList) { html += '</ol>'; inOrderedList = false; }
   };
 
+  const flushTable = () => {
+    if (!tableBuffer.length) return;
+    // tableBuffer[0] — заголовок, tableBuffer[1] — разделитель, остальное — строки
+    const parseRow = (row) =>
+      row.replace(/^\||\|$/g, '').split('|').map(cell => cell.trim());
+
+    const headers = parseRow(tableBuffer[0]);
+    const aligns = tableBuffer[1]
+      ? parseRow(tableBuffer[1]).map(cell => {
+          if (/^:-+:$/.test(cell)) return 'center';
+          if (/^-+:$/.test(cell))  return 'right';
+          return 'left';
+        })
+      : [];
+
+    let thtml = '<div class="md-table-wrap"><table class="md-table"><thead><tr>';
+    headers.forEach((h, i) => {
+      const align = aligns[i] ? ` style="text-align:${aligns[i]}"` : '';
+      thtml += `<th${align}>${inlineFormat(h)}</th>`;
+    });
+    thtml += '</tr></thead><tbody>';
+
+    for (let r = 2; r < tableBuffer.length; r++) {
+      const cells = parseRow(tableBuffer[r]);
+      thtml += '<tr>';
+      headers.forEach((_, i) => {
+        const align = aligns[i] ? ` style="text-align:${aligns[i]}"` : '';
+        thtml += `<td${align}>${inlineFormat(cells[i] || '')}</td>`;
+      });
+      thtml += '</tr>';
+    }
+    thtml += '</tbody></table></div>';
+    html += thtml;
+    tableBuffer = [];
+  };
+
   const inlineFormat = (s) => {
-    // Экранируем HTML
     s = esc(s);
-    // Жирный + курсив: ***text***
     s = s.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-    // Жирный: **text**
     s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    // Курсив: *text*
     s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
-    // Инлайн-код: `code`
     s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
     return s;
   };
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+  const isTableRow = (line) => /^\|.+\|/.test(line.trim());
 
-    // Заголовки
+  for (const line of lines) {
+    // Таблица
+    if (isTableRow(line)) {
+      closeList();
+      tableBuffer.push(line.trim());
+      continue;
+    } else if (tableBuffer.length) {
+      flushTable();
+    }
+
     if (/^### /.test(line)) { closeList(); html += `<h3>${inlineFormat(line.slice(4))}</h3>`; continue; }
     if (/^## /.test(line))  { closeList(); html += `<h2>${inlineFormat(line.slice(3))}</h2>`; continue; }
     if (/^# /.test(line))   { closeList(); html += `<h1>${inlineFormat(line.slice(2))}</h1>`; continue; }
-
-    // Горизонтальная линия
     if (/^---+$/.test(line.trim())) { closeList(); html += '<hr>'; continue; }
 
-    // Маркированный список
     if (/^[-*] /.test(line)) {
       if (inOrderedList) { html += '</ol>'; inOrderedList = false; }
       if (!inList) { html += '<ul>'; inList = true; }
       html += `<li>${inlineFormat(line.slice(2))}</li>`;
       continue;
     }
-
-    // Нумерованный список
     if (/^\d+\. /.test(line)) {
       if (inList) { html += '</ul>'; inList = false; }
       if (!inOrderedList) { html += '<ol>'; inOrderedList = true; }
       html += `<li>${inlineFormat(line.replace(/^\d+\. /, ''))}</li>`;
       continue;
     }
-
-    // Blockquote
     if (/^> /.test(line)) {
       closeList();
       html += `<blockquote>${inlineFormat(line.slice(2))}</blockquote>`;
       continue;
     }
 
-    // Пустая строка
-    if (line.trim() === '') {
-      closeList();
-      html += '<br>';
-      continue;
-    }
+    if (line.trim() === '') { closeList(); html += '<br>'; continue; }
 
-    // Обычный абзац
     closeList();
     html += `<p>${inlineFormat(line)}</p>`;
   }
 
+  flushTable();
   closeList();
   return html;
 }
 
-// ===== SSE УТИЛИТЫ =====
+// ===== SSE STREAM READER =====
 
-async function readSSEStream(resp, targetElementId, signal) {
-  const element = document.getElementById(targetElementId);
-  const loading = document.getElementById('result-loading');
-  let started = false;
-  let fullText = '';
-
-  await readSSEStreamToElement(resp, (chunk) => {
-    if (signal && signal.aborted) return;
-    if (!started) {
-      if (loading) loading.classList.add('hidden');
-      started = true;
-    }
-    if (chunk.startsWith('[ERROR]')) {
-      fullText = chunk.replace('[ERROR] ', 'Ошибка: ');
-    } else {
-      fullText += chunk;
-    }
-    element.innerHTML = renderMarkdown(fullText);
-  }, signal);
-}
-
-async function readSSEStreamToElement(resp, onChunk, signal) {
+async function readSSEStreamToElement(resp, targetElement, signal) {
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let fullText = '';
 
-  // Отменяем чтение потока при abort
-  if (signal) {
-    signal.addEventListener('abort', () => reader.cancel(), { once: true });
-  }
+  if (signal) signal.addEventListener('abort', () => reader.cancel());
 
   while (true) {
     const { done, value } = await reader.read();
-    if (done || (signal && signal.aborted)) break;
+    if (done) break;
 
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');
-    buffer = lines.pop(); // Последняя неполная строка
+    buffer = lines.pop();
 
     for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        const data = line.slice(6);
-        if (data === '[DONE]') {
-          hideLoading();
-          return;
+      if (!line.startsWith('data: ')) continue;
+      const data = line.slice(6);
+      if (data === '[DONE]') return fullText;
+      try {
+        const chunk = JSON.parse(data);
+        if (typeof chunk === 'string' && chunk.startsWith('[ERROR]')) {
+          fullText = chunk.replace('[ERROR] ', 'Ошибка: ');
+        } else {
+          fullText += chunk;
         }
-        try {
-          const text = JSON.parse(data);
-          onChunk(text);
-        } catch (e) {
-          // Пропускаем невалидный JSON
-        }
-      }
+        targetElement.innerHTML = renderMarkdown(fullText);
+        scrollChatToBottom();
+      } catch (e) { /* skip invalid JSON */ }
     }
   }
-  hideLoading();
+
+  return fullText;
 }
 
-// ===== UI УТИЛИТЫ =====
+// ===== INITIALIZATION =====
 
-function showSection(id) {
-  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-  document.getElementById(id).classList.add('active');
-}
-
-function switchTab(tabName, btn) {
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-  btn.classList.add('active');
-  document.getElementById('tab-' + tabName).classList.add('active');
-}
-
-function showResult(caseName) {
-  const area = document.getElementById('result-area');
-  area.classList.remove('hidden');
-
-  document.getElementById('result-case-label').textContent = caseName;
-  document.getElementById('result-content').textContent = '';
-  document.getElementById('result-loading').classList.remove('hidden');
-  hideFeedbackBar();
-
-  // Прокрутка к результату
-  area.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
-
-function hideResult() {
-  document.getElementById('result-area')?.classList.add('hidden');
-}
-
-function hideLoading() {
-  const loading = document.getElementById('result-loading');
-  if (loading) loading.classList.add('hidden');
-}
-
-function showFeedbackBar() {
-  const bar = document.getElementById('feedback-bar');
-  if (bar) {
-    bar.classList.remove('hidden');
-    // Сбрасываем предыдущее состояние
-    document.getElementById('btn-thumbs-up').classList.remove('active-pos');
-    document.getElementById('btn-thumbs-down').classList.remove('active-neg');
-    document.getElementById('feedback-sent').classList.add('hidden');
-  }
-}
-
-function hideFeedbackBar() {
-  document.getElementById('feedback-bar')?.classList.add('hidden');
-}
-
-function showGlobalAlert(type, message) {
-  const alert = document.getElementById('global-alert');
-  alert.className = `alert alert-${type}`;
-  alert.textContent = message;
-  alert.classList.remove('hidden');
-}
-
-function hideGlobalAlert() {
-  document.getElementById('global-alert').classList.add('hidden');
-}
-
-// ===== ИНИЦИАЛИЗАЦИЯ =====
 document.addEventListener('DOMContentLoaded', () => {
   initSession();
+  loadMaps();
 });

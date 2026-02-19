@@ -7,8 +7,8 @@
 }
 
 :root {
-  --color-primary: #0052CC;
-  --color-primary-hover: #0041A8;
+  --color-primary: #0043A4;
+  --color-primary-hover: #00348A;
   --color-success: #36B37E;
   --color-danger: #FF5630;
   --color-warning: #FFAB00;
@@ -59,6 +59,12 @@ body {
 .panel-header h2 {
   font-size: 16px;
   font-weight: 600;
+}
+
+.panel-logo {
+  height: 28px;
+  width: auto;
+  display: block;
 }
 
 .panel-section {
@@ -468,7 +474,7 @@ body {
 
 .feedback-btn:hover {
   border-color: var(--color-primary);
-  background: rgba(0, 82, 204, 0.04);
+  background: rgba(0, 67, 164, 0.04);
 }
 
 .feedback-sent { font-size: 12px; color: var(--color-success); }

@@ -19,7 +19,7 @@
 
     /* Header */
     .app-header {
-      background: #0052CC;
+      background: #0043A4;
       color: white;
       padding: 12px 24px;
       display: flex;
@@ -61,7 +61,7 @@
       margin-bottom: 16px;
       font-size: 13px;
     }
-    .alert-info { background: #E4F0FF; color: #0052CC; border: 1px solid #b3d1ff; }
+    .alert-info { background: #E4F0FF; color: #0043A4; border: 1px solid #b3d1ff; }
     .alert-error { background: #FFEBE6; color: #BF2600; border: 1px solid #ffbdad; }
     .hidden { display: none !important; }
 
@@ -79,7 +79,7 @@
       box-shadow: 0 1px 3px rgba(9,30,66,0.13);
       text-align: center;
     }
-    .stat-value { font-size: 28px; font-weight: 700; color: #0052CC; margin-bottom: 4px; }
+    .stat-value { font-size: 28px; font-weight: 700; color: #0043A4; margin-bottom: 4px; }
     .stat-label { font-size: 12px; color: #6B778C; }
 
     /* Charts */
@@ -129,7 +129,7 @@
 
     /* Buttons */
     .refresh-btn {
-      background: #0052CC;
+      background: #0043A4;
       color: white;
       border: none;
       padding: 8px 16px;
@@ -138,7 +138,7 @@
       cursor: pointer;
       margin-left: auto;
     }
-    .refresh-btn:hover { background: #0041A8; }
+    .refresh-btn:hover { background: #00348A; }
 
     .no-data { color: #6B778C; font-size: 13px; text-align: center; padding: 20px; }
   </style>
@@ -205,6 +205,15 @@
     <div class="card">
       <div class="card-title">Оценки по кейсам (критерий гипотезы: >70% положительных)</div>
       <div id="cases-table-container">
+        <div class="no-data">Нет данных</div>
+      </div>
+    </div>
+
+    <!-- Оценки свободного чата -->
+    <div class="card">
+      <div class="card-title">Оценки свободного чата</div>
+      <div id="chat-feedback-summary" style="margin-bottom:12px;font-size:13px;color:#5E6C84"></div>
+      <div id="chat-feedback-container">
         <div class="no-data">Нет данных</div>
       </div>
     </div>

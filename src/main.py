@@ -2,23 +2,34 @@
 
 import os
 import json
+import secrets
+import logging
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException
+logger = logging.getLogger(__name__)
+
+from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException, Depends
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.config import get_data_dir, get_targets_base_url
+from src.config import get_data_dir, get_targets_base_url, get_backoffice_credentials
 from src.models.api import (
-    CaseRequest, ChatRequest, FeedbackRequest,
+    CaseRequest, ChatRequest, FeedbackRequest, ChatFeedbackRequest,
     DataLoadResponse, GoalListItem, JsonUploadRequest,
 )
 from src.services.json_parser import parse_goals_map, format_map_for_llm
 from src.services.docx_parser import parse_docx_bytes, parse_docx_file
 from src.services import cases_service, chat_service, targets_api, context_builder
-from src.services.metrics_storage import init_db, log_request, save_feedback, get_metrics
+from src.services.metrics_storage import (
+    init_db, log_request, save_feedback,
+    save_chat_feedback, update_chat_feedback_summary, get_metrics,
+)
+from src.services.llm_service import get_completion
+
+_basic_security = HTTPBasic(auto_error=True)
 
 # Инициализация базы данных при запуске
 init_db()
@@ -43,6 +54,27 @@ app.add_middleware(
 # Раздача статических файлов
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+
+def _check_backoffice_auth(credentials: HTTPBasicCredentials = Depends(_basic_security)):
+    """
+    Проверяет Basic Auth для доступа к бэкофису.
+
+    Raises:
+        HTTPException 401: Если логин или пароль неверны.
+    """
+    username, password = get_backoffice_credentials()
+    ok = (
+        secrets.compare_digest(credentials.username.encode(), username.encode())
+        and secrets.compare_digest(credentials.password.encode(), password.encode())
+    )
+    if not ok:
+        raise HTTPException(
+            status_code=401,
+            detail="Неверные логин или пароль",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials.username
 
 
 def _get_client_ip(request: Request) -> str:
@@ -97,8 +129,8 @@ async def index(request: Request):
 
 
 @app.get("/backoffice", response_class=HTMLResponse)
-async def backoffice(request: Request):
-    """Страница метрик бэк-офиса."""
+async def backoffice(request: Request, _: str = Depends(_check_backoffice_auth)):
+    """Страница метрик бэк-офиса (защищена Basic Auth)."""
     backoffice_path = static_dir / "backoffice.html"
     if not backoffice_path.exists():
         raise HTTPException(status_code=404, detail="backoffice.html не найден")
@@ -352,8 +384,8 @@ async def run_case(case_id: int, request: Request):
     Raises:
         HTTPException: Если кейс не найден или контекст не задан.
     """
-    if case_id < 1 or case_id > 7:
-        raise HTTPException(status_code=400, detail="Номер кейса должен быть от 1 до 7")
+    if case_id not in (1, 2, 3, 5, 6, 7):
+        raise HTTPException(status_code=400, detail="Допустимые кейсы: 1, 2, 3, 5, 6, 7")
 
     ip = _get_client_ip(request)
     log_request(ip, f"/api/cases/{case_id}", case_id=case_id)
@@ -566,8 +598,47 @@ async def feedback(request: Request, body: FeedbackRequest):
     return {"success": True}
 
 
+@app.post("/api/feedback/chat/summarize")
+async def summarize_chat_feedback(request: Request):
+    """
+    Асинхронно генерирует краткое резюме (2-3 слова) запроса пользователя через LLM
+    и сохраняет его в запись chat_feedback.
+
+    Body: {"id": int, "user_message": str}
+
+    Returns:
+        dict: {"summary": str} — сгенерированное резюме.
+    """
+    body_json = await request.json()
+    feedback_id = body_json.get("id")
+    user_message = body_json.get("user_message", "")
+
+    if not feedback_id or not user_message:
+        raise HTTPException(status_code=400, detail="Необходимы поля id и user_message")
+
+    try:
+        summary = await get_completion([
+            {
+                "role": "system",
+                "content": (
+                    "Сократи вопрос пользователя до 2-3 слов (тема запроса). "
+                    "Отвечай только этими словами, без знаков препинания и пояснений."
+                ),
+            },
+            {"role": "user", "content": user_message},
+        ])
+        # Обрезаем до разумного максимума на случай неожиданного ответа модели
+        summary = summary[:60]
+        update_chat_feedback_summary(feedback_id, summary)
+        return {"summary": summary}
+    except Exception as e:
+        # При любой ошибке не ломаем клиент — просто не обновляем summary
+        logger.error("summarize_chat_feedback failed for id=%s: %s", feedback_id, e)
+        return {"summary": None}
+
+
 @app.get("/api/metrics")
-async def metrics():
+async def metrics(_: str = Depends(_check_backoffice_auth)):
     """
     Возвращает агрегированные метрики использования для бэк-офиса.
 
@@ -575,3 +646,26 @@ async def metrics():
         dict: Метрики: статистика по IP, кейсам, оценкам, временной ряд.
     """
     return get_metrics()
+
+
+@app.post("/api/feedback/chat")
+async def chat_feedback(request: Request, body: ChatFeedbackRequest):
+    """
+    Сохраняет оценку (👍/👎) ответа свободного чата с контекстом запроса.
+
+    Args:
+        body: vote, session_id, user_message, context_type, context_name.
+
+    Returns:
+        dict: Подтверждение сохранения.
+    """
+    ip = _get_client_ip(request)
+    feedback_id = save_chat_feedback(
+        ip=ip,
+        session_id=body.session_id,
+        vote=body.vote,
+        user_message=body.user_message,
+        context_type=body.context_type,
+        context_name=body.context_name,
+    )
+    return {"success": True, "id": feedback_id}

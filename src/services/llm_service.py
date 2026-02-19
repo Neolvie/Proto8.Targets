@@ -67,3 +67,32 @@ async def stream_completion(
                 "Попробуйте загрузить часть целей или выбрать конкретную цель."
             ) from e
         raise RuntimeError(f"Ошибка при обращении к LLM: {e}") from e
+
+
+async def get_completion(messages: list[dict], model: str | None = None) -> str:
+    """
+    Выполняет одиночный (не потоковый) запрос к LLM и возвращает полный ответ.
+
+    Args:
+        messages: Список сообщений в формате [{role, content}].
+        model: Название модели (если None — берётся из конфигурации).
+
+    Returns:
+        str: Полный текст ответа модели.
+
+    Raises:
+        RuntimeError: При ошибках API.
+    """
+    client = _create_client()
+    model_name = model or get_openai_model()
+    try:
+        response = await client.chat.completions.create(
+            model=model_name,
+            messages=messages,
+            stream=False,
+            max_tokens=1000,
+            temperature=0,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        raise RuntimeError(f"Ошибка при обращении к LLM: {e}") from e

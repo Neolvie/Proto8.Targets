@@ -2,17 +2,34 @@ version: "3.9"
 
 services:
   app:
-    build: .
+    build:
+      context: .
+      target: production
     ports:
       - "8000:8000"
     volumes:
       - ./data:/app/data
-    # env_file передаёт переменные окружения из .env файла
-    # Раскомментировать когда .env существует:
-    # env_file:
-    #   - .env
+    env_file:
+      - .env
     environment:
-      #- OPENAI_API_KEY=
-      #- OPENAI_MODEL=
-      #- OPENAI_SERVER=
+      - PYTHONUNBUFFERED=1
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Test service (runs unit tests inside container)
+  test:
+    build:
+      context: .
+      target: test
+    volumes:
+      - ./data:/app/data
+      - ./tests:/app/tests
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: ["pytest", "tests/unit/", "-v", "--cov=src", "--cov-report=term"]
+    profiles:
+      - test

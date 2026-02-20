@@ -31,3 +31,22 @@ def get_data_dir() -> str:
 def get_port() -> int:
     """Возвращает порт приложения."""
     return int(os.getenv("PORT", "8000"))
+
+
+def get_targets_base_url() -> str | None:
+    """Возвращает базовый URL Directum Targets API."""
+    url = os.getenv("TARGETS_BASE_URL", "").strip()
+    return url if url else None
+
+
+def get_targets_token() -> str | None:
+    """Возвращает Bearer-токен для Directum Targets API."""
+    token = os.getenv("TARGETS_TOKEN", "").strip()
+    return token if token else None
+
+
+def get_backoffice_credentials() -> tuple[str, str]:
+    """Возвращает (логин, пароль) для Basic Auth бэкофиса."""
+    user = os.getenv("BACKOFFICE_USER", "admin").strip()
+    password = os.getenv("BACKOFFICE_PASSWORD", "admin").strip()
+    return user, password

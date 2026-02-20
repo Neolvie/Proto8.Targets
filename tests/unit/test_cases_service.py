@@ -15,7 +15,6 @@ def goals_map(sample_json_text):
 class TestRunCase:
     """Тесты функции run_case."""
 
-    @pytest.mark.asyncio
     async def test_invalid_case_id_raises(self, goals_map):
         """Несуществующий кейс (0 или 8) вызывает ValueError."""
         with pytest.raises(ValueError, match="не существует"):
@@ -24,21 +23,18 @@ class TestRunCase:
         with pytest.raises(ValueError, match="не существует"):
             await cases_service.run_case(8, goals_map, None, None)
 
-    @pytest.mark.asyncio
     @pytest.mark.parametrize("case_id", [1, 2, 3, 4, 6])
     async def test_cases_1_to_4_6_require_goal(self, goals_map, case_id):
         """Кейсы 1-4 и 6 требуют выбранную цель."""
         with pytest.raises(ValueError, match="необходимо выбрать цель"):
             await cases_service.run_case(case_id, goals_map, None, None)
 
-    @pytest.mark.asyncio
     @pytest.mark.parametrize("case_id", [1, 2, 3, 4, 6])
     async def test_case_with_unknown_goal_id_raises(self, goals_map, case_id):
         """Кейсы с несуществующим goal_id выбрасывают ValueError."""
         with pytest.raises(ValueError, match="не найдена"):
             await cases_service.run_case(case_id, goals_map, "nonexistent_999", None)
 
-    @pytest.mark.asyncio
     async def test_case5_works_without_goal(self, goals_map):
         """Кейс 5 (конфликты) не требует выбранную цель."""
         async def mock_stream(messages, model=None):
@@ -52,7 +48,6 @@ class TestRunCase:
             assert len(chunks) > 0
             assert "Тестовый ответ кейса 5" in "".join(chunks)
 
-    @pytest.mark.asyncio
     async def test_case7_works_without_goal(self, goals_map):
         """Кейс 7 (экспресс-отчёт) не требует выбранную цель."""
         async def mock_stream(messages, model=None):
@@ -65,7 +60,6 @@ class TestRunCase:
                 chunks.append(chunk)
             assert len(chunks) > 0
 
-    @pytest.mark.asyncio
     @pytest.mark.parametrize("case_id", [1, 2, 3, 4, 6])
     async def test_cases_with_valid_goal(self, goals_map, case_id):
         """Кейсы 1-4 и 6 успешно выполняются с корректной целью."""
@@ -127,3 +121,39 @@ class TestCasesPromptBuilding:
         goal = cases_service._get_goal_or_raise(goals_map, "1")
         ctx = cases_service._goal_context(goal, None)
         assert "из DOCX" not in ctx
+
+
+class TestRunCaseV2:
+    """Тесты для run_case_v2 (v2 API с текстовыми контекстами)."""
+
+    async def test_case1_v2_requires_target_context(self):
+        """Кейс 1 v2 требует target_context."""
+        with pytest.raises(ValueError, match="необходимо выбрать цель"):
+            await cases_service.run_case_v2(1, map_context=None, target_context=None)
+
+    async def test_case5_v2_requires_map_context(self):
+        """Кейс 5 v2 требует map_context."""
+        with pytest.raises(ValueError, match="необходимо выбрать карту"):
+            await cases_service.run_case_v2(5, map_context=None, target_context=None)
+
+    async def test_case1_v2_works_with_target_context(self):
+        """Кейс 1 v2 работает с target_context."""
+        async def mock_stream(messages, model=None):
+            yield "SMART-анализ"
+
+        with patch("src.services.llm_service.stream_completion", side_effect=mock_stream):
+            gen = await cases_service.run_case_v2(
+                1,
+                map_context=None,
+                target_context="Цель: [T-1] Тестовая цель\nПрогресс: 50%"
+            )
+            chunks = []
+            async for chunk in gen:
+                chunks.append(chunk)
+            assert len(chunks) > 0
+            assert "SMART" in "".join(chunks)
+
+    async def test_invalid_case_id_v2_raises(self):
+        """Несуществующий кейс v2 выбрасывает ValueError."""
+        with pytest.raises(ValueError, match="не существует"):
+            await cases_service.run_case_v2(0, None, None)

@@ -1,13 +1,12 @@
 /* Бэк-офис — логика загрузки и отображения метрик */
 
 const CASE_NAMES = {
-  1: 'Формулировка цели',
-  2: 'Ключевые результаты',
-  3: 'Квартальная декомпозиция',
-  4: 'Верификация по руководству',
-  5: 'Конфликты и слепые зоны',
-  6: 'Риски достижения',
-  7: 'Экспресс-отчёт',
+  1: 'Переформулировать цель',
+  2: 'Сгенерировать KR',
+  3: 'Декомпозировать',
+  5: 'Подсветить конфликты',
+  6: 'Выявить риски',
+  7: 'Подготовить отчёт',
 };
 
 let timelineChart = null;
@@ -21,7 +20,7 @@ async function loadMetrics() {
   errorMsg.classList.add('hidden');
 
   try {
-    const resp = await fetch('/api/metrics');
+    const resp = await fetch('/api/metrics', { credentials: 'include' });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const data = await resp.json();
     renderMetrics(data);
@@ -51,6 +50,9 @@ function renderMetrics(data) {
 
   // Таблица кейсов с оценками
   renderCasesTable(data.case_stats || []);
+
+  // Таблица оценок чата
+  renderChatFeedbackTable(data.chat_feedback || [], data.chat_positive_pct, data.chat_total_votes);
 }
 
 function renderTimelineChart(timeline) {
@@ -77,7 +79,7 @@ function renderTimelineChart(timeline) {
       datasets: [{
         label: 'Запросов в день',
         data: counts,
-        borderColor: '#0052CC',
+        borderColor: '#0043A4',
         backgroundColor: 'rgba(0,82,204,0.1)',
         tension: 0.3,
         fill: true,
@@ -118,7 +120,7 @@ function renderCasesChart(caseStats) {
       datasets: [{
         label: 'Запусков',
         data: counts,
-        backgroundColor: '#0052CC',
+        backgroundColor: '#0043A4',
         borderRadius: 4,
       }]
     },
@@ -211,6 +213,67 @@ function renderCasesTable(caseStats) {
         </tr>
       </thead>
       <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+function renderChatFeedbackTable(rows, positivePct, totalVotes) {
+  const summary = document.getElementById('chat-feedback-summary');
+  const container = document.getElementById('chat-feedback-container');
+
+  if (!rows.length) {
+    summary.textContent = '';
+    container.innerHTML = '<div class="no-data">Нет данных</div>';
+    return;
+  }
+
+  const pctText = positivePct != null ? `${positivePct}% положительных` : '—';
+  summary.textContent = `Всего оценок: ${totalVotes || 0} | ${pctText}`;
+
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const tableRows = rows.map(r => {
+    const voteIcon = r.vote === 1 ? '👍' : '👎';
+    const voteClass = r.vote === 1 ? 'badge-green' : 'badge-red';
+    const contextLabel = r.context_type === 'target' ? 'Цель' : 'Карта';
+    const ts = r.timestamp ? r.timestamp.slice(0, 16).replace('T', ' ') : '—';
+
+    let messageCell;
+    if (r.summary) {
+      // Саммари от LLM готово — показываем его + спойлер с полным текстом
+      messageCell = `
+        ${esc(r.summary)}
+        <details style="margin-top:4px;font-size:12px">
+          <summary style="cursor:pointer;color:#0043A4">Полный текст</summary>
+          <pre style="white-space:pre-wrap;margin-top:4px;background:#F4F5F7;padding:6px;border-radius:4px;font-size:11px">${esc(r.user_message)}</pre>
+        </details>
+      `;
+    } else {
+      // Саммари ещё не готово или ошибка — показываем полный текст без спойлера
+      messageCell = `<span style="color:#5E6C84">${esc(r.user_message)}</span>`;
+    }
+
+    return `
+      <tr>
+        <td style="white-space:nowrap;font-size:12px;color:#5E6C84">${ts}</td>
+        <td><span class="badge ${voteClass}">${voteIcon}</span></td>
+        <td style="font-size:12px">${contextLabel}: <strong>${esc(r.context_name)}</strong></td>
+        <td>${messageCell}</td>
+      </tr>
+    `;
+  }).join('');
+
+  container.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Время</th>
+          <th>Оценка</th>
+          <th>Контекст</th>
+          <th>Запрос пользователя</th>
+        </tr>
+      </thead>
+      <tbody>${tableRows}</tbody>
     </table>
   `;
 }

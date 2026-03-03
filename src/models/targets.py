@@ -148,11 +148,10 @@ class MapGraphPayload(BaseModel):
 
 
 class MapGraph(BaseModel):
-    """Граф целей карты (ответ GetGoalsMap)."""
+    """Граф целей карты (ответ GetTargetsMap)."""
 
-    IsSuccess: bool = True
-    Message: Optional[str] = None
-    Payload: MapGraphPayload
+    Nodes: List[GoalNode]
+    Map: Optional[MapInfo] = None
 
     class Config:
         extra = "ignore"

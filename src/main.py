@@ -235,9 +235,9 @@ async def get_map_goals(map_id: int, request: Request):
 
     # Формирование ответа
     map_info = {
-        "id": graph.Payload.Map.Id,
-        "name": graph.Payload.Map.Name,
-        "progress": graph.Payload.Map.Progress,
+        "id": graph.Map.Id if graph.Map else 0,
+        "name": graph.Map.Name if graph.Map else "",
+        "progress": graph.Map.Progress if graph.Map else 0.0,
     }
 
     nodes_data = [
@@ -253,7 +253,7 @@ async def get_map_goals(map_id: int, request: Request):
             "period_name": (node.Period.Name or "—") if node.Period else "—",
             "key_result_count": node.KeyResultCount,
         }
-        for node in graph.Payload.Nodes
+        for node in graph.Nodes
     ]
 
     return {"map": map_info, "nodes": nodes_data}
@@ -422,13 +422,13 @@ async def run_case(case_id: int, request: Request):
                 graph = cache["map_graph"][map_id]
                 # Формируем текстовый контекст карты
                 map_context = context_builder.build_map_context(
-                    nodes=graph.Payload.Nodes,
+                    nodes=graph.Nodes,
                     map_info=cache["maps"][0] if cache["maps"] else None  # Находим карту по ID
                 )
                 # Ищем карту в списке
                 for m in cache["maps"]:
                     if m.Id == map_id:
-                        map_context = context_builder.build_map_context(graph.Payload.Nodes, m)
+                        map_context = context_builder.build_map_context(graph.Nodes, m)
                         break
 
             elif mode == "target" and target_id is not None:
@@ -526,7 +526,7 @@ async def chat(request: Request):
                 # Ищем карту в списке
                 for m in cache["maps"]:
                     if m.Id == map_id:
-                        map_context = context_builder.build_map_context(graph.Payload.Nodes, m)
+                        map_context = context_builder.build_map_context(graph.Nodes, m)
                         break
 
             elif mode == "target" and target_id is not None:

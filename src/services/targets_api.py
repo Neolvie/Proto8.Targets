@@ -106,7 +106,7 @@ async def get_map_graph(map_id: int) -> MapGraph:
     """
     Загружает граф целей карты из Targets API.
 
-    POST {TARGETS_BASE_URL}/integration/odata/Targets/GetGoalsMap
+    POST {TARGETS_BASE_URL}/integration/odata/Targets/GetTargetsMap
     Body: {"mapId": map_id}
 
     Returns:
@@ -124,7 +124,7 @@ async def get_map_graph(map_id: int) -> MapGraph:
             detail="TARGETS_BASE_URL и TARGETS_TOKEN должны быть заданы в .env"
         )
 
-    url = f"{base_url}/integration/odata/Targets/GetGoalsMap"
+    url = f"{base_url}/integration/odata/Targets/GetTargetsMap"
     token_clean = token.strip('"').strip("'")
     headers = {
         "Authorization": token_clean,
